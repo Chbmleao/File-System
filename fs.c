@@ -46,6 +46,23 @@ struct nodeinfo* nodeInfoFactory(struct nodeinfo *src, int blocksize){
   return newNodeInfo;
 }
 
+int explorePath(const char *pathName, char pathVector[128][128]) {
+  char *path = (char*) malloc(4096*sizeof(char));
+	strcpy(path, pathName);
+
+  // Get a vector of string with the path levels
+  int pathDepth = 0;
+
+  char *pathLevel = strtok(path, "/");
+  while(pathLevel != NULL){
+    strcpy(pathVector[pathDepth], pathLevel);
+    pathLevel = strtok(NULL, "/");
+    pathDepth++;
+  }
+
+  return pathDepth;
+}
+
 struct superblock * fs_format(const char *fname, uint64_t blocksize) {
   long int size_bytes;
   FILE* storage;
@@ -331,19 +348,9 @@ int fs_put_block(struct superblock *sb, uint64_t block) {
 }
 
 int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cnt) {
-  char *file_path = (char*) malloc(4096*sizeof(char));
-	strcpy(file_path, fname);
-	
 	// Get a vector of string with the path levels
-  int path_depth = 0;
   char path_vector[128][128];
-
-  char *path_level = strtok(file_path, "/");
-  while(path_level != NULL){
-    strcpy(path_vector[path_depth], path_level);
-    path_level = strtok(NULL, "/");
-    path_depth++;
-  }
+  int path_depth = explorePath(fname, path_vector);
 
   // Get the root directory nodeinfo
   struct nodeinfo *root_node_info = (struct nodeinfo*) malloc(sb->blksz);
@@ -588,19 +595,9 @@ ssize_t fs_read_file(struct superblock *sb, const char *fname, char *buf, size_t
 }
 
 int fs_unlink(struct superblock *sb, const char *fname) {
-  char *file_path = (char*) malloc(4096*sizeof(char));
-	strcpy(file_path, fname);
-	
-	// Get a vector of string with the path levels
-  int path_depth = 0;
+  // Get a vector of string with the path levels
   char path_vector[128][128];
-
-  char *path_level = strtok(file_path, "/");
-  while(path_level != NULL){
-    strcpy(path_vector[path_depth], path_level);
-    path_level = strtok(NULL, "/");
-    path_depth++;
-  }
+  int path_depth = explorePath(fname, path_vector);
 
   // Get the root directory nodeinfo
   struct nodeinfo *root_node_info = (struct nodeinfo*) malloc(sb->blksz);
@@ -729,19 +726,9 @@ int fs_unlink(struct superblock *sb, const char *fname) {
 }
 
 int fs_mkdir(struct superblock *sb, const char *dname) {
-  char *file_path = (char*) malloc(4096*sizeof(char));
-	strcpy(file_path, dname);
-	
-	// Get a vector of string with the path levels
-  int path_depth = 0;
+  // Get a vector of string with the path levels
   char path_vector[128][128];
-
-  char *path_level = strtok(file_path, "/");
-  while(path_level != NULL){
-    strcpy(path_vector[path_depth], path_level);
-    path_level = strtok(NULL, "/");
-    path_depth++;
-  }
+  int path_depth = explorePath(dname, path_vector);
 
   // Get the root directory nodeinfo
   struct nodeinfo *root_node_info = (struct nodeinfo*) malloc(sb->blksz);
@@ -867,19 +854,9 @@ int fs_mkdir(struct superblock *sb, const char *dname) {
 }
 
 int fs_rmdir(struct superblock *sb, const char *dname) {
-  char *file_path = (char*) malloc(4096*sizeof(char));
-	strcpy(file_path, dname);
-	
-	// Get a vector of string with the path levels
-  int path_depth = 0;
+  // Get a vector of string with the path levels
   char path_vector[128][128];
-
-  char *path_level = strtok(file_path, "/");
-  while(path_level != NULL){
-    strcpy(path_vector[path_depth], path_level);
-    path_level = strtok(NULL, "/");
-    path_depth++;
-  }
+  int path_depth = explorePath(dname, path_vector);
 
   // Get the root directory nodeinfo
   struct nodeinfo *root_node_info = (struct nodeinfo*) malloc(sb->blksz);
@@ -1010,19 +987,9 @@ int fs_rmdir(struct superblock *sb, const char *dname) {
 }
 
 char * fs_list_dir(struct superblock *sb, const char *dname) {
-  char *file_path = (char*) malloc(4096*sizeof(char));
-	strcpy(file_path, dname);
-	
-	// Get a vector of string with the path levels
-  int path_depth = 0;
+  // Get a vector of string with the path levels
   char path_vector[128][128];
-
-  char *path_level = strtok(file_path, "/");
-  while(path_level != NULL){
-    strcpy(path_vector[path_depth], path_level);
-    path_level = strtok(NULL, "/");
-    path_depth++;
-  }
+  int path_depth = explorePath(dname, path_vector);
 
   // Get the root directory nodeinfo
   struct nodeinfo *root_node_info = (struct nodeinfo*) malloc(sb->blksz);
