@@ -10,6 +10,9 @@
 
 #include "fs.h"
 
+// Big variable name due to the fact that C macros are not scoped
+#define CEILING(valueToBeCeiled) ((valueToBeCeiled - (int)(valueToBeCeiled)) > 0 ? (int)(valueToBeCeiled + 1) : (int)(valueToBeCeiled))
+
 #define FS_MAGIC_NUMBER 0xdcc605f5
 #define MAX_NAME 100 // File name max size
 #define MAX_SUBFOLDERS 100 // Max number of subfolders in a file path
@@ -38,7 +41,7 @@ void copyInodeInfo(struct nodeinfo *src, struct nodeinfo *dest){
 	for(int i = 0; i < 7; i++)
 		dest->reserved[i] = src->reserved[i];
 	
-	strcat(dest->name, src->name);
+	strcpy(dest->name, src->name);
 }
 
 struct superblock * fs_format(const char *fname, uint64_t blocksize) {
@@ -165,7 +168,7 @@ struct superblock * fs_open(const char *fname) {
   }
 
   // Prevents other processes from accessing the file
-  if(flock(file_descriptor, LOCK_EX) < 0) {
+  if(flock(file_descriptor, LOCK_NB | LOCK_EX) < 0) {
     // Error locking file
     close(file_descriptor);
     errno = EBUSY;
@@ -326,14 +329,17 @@ int fs_put_block(struct superblock *sb, uint64_t block) {
 }
 
 int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cnt) {
-  // Get a vector of string with the path levels
+  char *file_path = (char*) malloc(MAX_PATH_NAME*sizeof(char));
+	strcpy(file_path, fname);
+	
+	// Get a vector of string with the path levels
   int path_depth = 0;
   char path_vector[100][100];
 
-  char *token = strtok(fname, "/");
-  while(token != NULL){
-    strcpy(path_vector[path_depth], token);
-    token = strtok(NULL, "/");
+  char *path_level = strtok(file_path, "/");
+  while(path_level != NULL){
+    strcpy(path_vector[path_depth], path_level);
+    path_level = strtok(NULL, "/");
     path_depth++;
   }
 
@@ -353,20 +359,20 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
   block_indexes[0] = 1; // root nodeinfo index
   block_indexes[1] = sb->root; // root inode index
 
-  struct inode *fileParentINode;
-  struct nodeinfo *fileParentNodeInfo;
+  struct inode *fileParentINode = (struct inode*) malloc(sb->blksz);
+  struct nodeinfo *fileParentNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
   copyInode(root_inode, fileParentINode, root_node_info);
   copyInodeInfo(root_node_info, fileParentNodeInfo);
 
-  uint64_t parentOfFileParentINodeIdx = (uint64_t) 1;
-  uint64_t parentOfFileParentNodeInfoIdx = (uint64_t) 2;
+  uint64_t parentOfFileParentNodeInfoIdx = (uint64_t) 1;
+  uint64_t parentOfFileParentINodeIdx = (uint64_t) 2;
 
   uint64_t is_new_file = 0;
-  struct inode *previousInode;
+  struct inode *previousInode = (struct inode*) malloc(sb->blksz);
   struct inode *currentInode = (struct inode*) malloc(sb->blksz);
   copyInode(root_inode, previousInode, root_node_info);
 
-  struct nodeinfo *previousNodeInfo;
+  struct nodeinfo *previousNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
   struct nodeinfo *currentNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
   copyInodeInfo(root_node_info, previousNodeInfo);
 
@@ -380,7 +386,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
     while(1) {
       subpath_exists = 0;
       int j;
-      for(j = 0; j < root_node_info->size; j++) {
+      for(j = 0; j < previousNodeInfo->size; j++) {
         // Read the inode from the file
         lseek(sb->fd, previousInode->links[j]*sb->blksz, SEEK_SET);
         read(sb->fd, currentInode, sb->blksz);
@@ -440,7 +446,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
           // Store it in a free block
           block_indexes[1] = fs_get_block(sb); //TODO: attention
 
-          is_new_file =1;
+          is_new_file = 1;
         } else if(previousInode->next == 0) {
           // Given folder path does not exists
           errno = ENOENT;
@@ -466,7 +472,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
     fileParentNodeInfo->size += 1;
 
     // Gets amount of blocks needed to store the file
-    blocks_needed = cnt/(sb->blksz-20); //TODO: attention
+    blocks_needed = CEILING((float)cnt/((float)sb->blksz-20.0));
 
     // Gets free blocks to store the file
     for(int i = 0; i < blocks_needed-1; i++) {
@@ -474,10 +480,10 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
     }
   } else {
     // Get amount of blocks already used by the file node
-    int blocks_currently_being_used = previousNodeInfo->size/(sb->blksz-20); //TODO: attention
+    int blocks_currently_being_used = CEILING((float)previousNodeInfo->size/((float)sb->blksz-20.0));
   
     // Gets amount of blocks needed to store the file
-    blocks_needed = cnt/(sb->blksz-20); //TODO: attention
+    blocks_needed = CEILING((float)cnt/((float)sb->blksz-20.0));
 
     if(blocks_currently_being_used <= blocks_needed) {
       // There are not enough or just enough blocks to store the new content
@@ -546,7 +552,6 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
   write(sb->fd, previousInode, sb->blksz);
 
   // Write the file content on children blocks
-  copyInode(previousInode, currentInode, previousNodeInfo);
   currentInode->mode = IMCHILD;
   currentInode->parent = block_indexes[1];
 
@@ -585,14 +590,17 @@ ssize_t fs_read_file(struct superblock *sb, const char *fname, char *buf, size_t
 }
 
 int fs_unlink(struct superblock *sb, const char *fname) {
-  // Get a vector of string with the path levels
+  char *file_path = (char*) malloc(MAX_PATH_NAME*sizeof(char));
+	strcpy(file_path, fname);
+	
+	// Get a vector of string with the path levels
   int path_depth = 0;
   char path_vector[100][100];
 
-  char *token = strtok(fname, "/");
-  while(token != NULL){
-    strcpy(path_vector[path_depth], token);
-    token = strtok(NULL, "/");
+  char *path_level = strtok(file_path, "/");
+  while(path_level != NULL){
+    strcpy(path_vector[path_depth], path_level);
+    path_level = strtok(NULL, "/");
     path_depth++;
   }
 
@@ -612,21 +620,21 @@ int fs_unlink(struct superblock *sb, const char *fname) {
   block_indexes[0] = 1; // root nodeinfo index
   block_indexes[1] = sb->root; // root inode index
 
-  struct inode *fileParentINode;
-  struct nodeinfo *fileParentNodeInfo;
+  struct inode *fileParentINode = (struct inode*) malloc(sb->blksz);
+  struct nodeinfo *fileParentNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
   copyInode(root_inode, fileParentINode, root_node_info);
   copyInodeInfo(root_node_info, fileParentNodeInfo);
 
-  uint64_t parentOfFileParentINodeIdx = (uint64_t) 1;
-  uint64_t parentOfFileParentNodeInfoIdx = (uint64_t) 2;
+  uint64_t parentOfFileParentNodeInfoIdx = (uint64_t) 1;
+  uint64_t parentOfFileParentINodeIdx = (uint64_t) 2;
 
-  struct inode *previousInode;
+  struct inode *previousInode = (struct inode*) malloc(sb->blksz);
   struct inode *currentInode = (struct inode*) malloc(sb->blksz);
   copyInode(root_inode, previousInode, root_node_info);
 
-  struct nodeinfo *previousNodeInfo;
+  struct nodeinfo *previousNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
   struct nodeinfo *currentNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
-  copyInodeInfo(root_node_info, currentNodeInfo);
+  copyInodeInfo(root_node_info, previousNodeInfo);
 
   free(root_inode);
   free(root_node_info);
@@ -638,7 +646,7 @@ int fs_unlink(struct superblock *sb, const char *fname) {
     while(1) {
       subpath_exists = 0;
       int j;
-      for(j = 0; j < root_node_info->size; j++) {
+      for(j = 0; j < previousNodeInfo->size; j++) {
         // Read the inode from the file
         lseek(sb->fd, previousInode->links[j]*sb->blksz, SEEK_SET);
         read(sb->fd, currentInode, sb->blksz);
@@ -671,7 +679,7 @@ int fs_unlink(struct superblock *sb, const char *fname) {
           parentOfFileParentNodeInfoIdx = currentInode->meta;
         }
         break;
-      } else if(j == (path_depth-1)  || previousInode->next == 0) {
+      } else if(i == (path_depth - 1)  || previousInode->next == 0) {
         // Given folder path does not exists
         errno = ENOENT;
         return -1;
@@ -682,8 +690,8 @@ int fs_unlink(struct superblock *sb, const char *fname) {
       read(sb->fd, previousInode, sb->blksz);
     }
     // Updates the inode parents
-    copyInode(currentInode, previousInode, currentNodeInfo);
-    copyInodeInfo(currentNodeInfo, previousNodeInfo);
+    copyInode(previousInode, fileParentINode, previousNodeInfo);
+    copyInodeInfo(previousNodeInfo, fileParentNodeInfo);
 
     // Read the next folder
     copyInode(currentInode, previousInode, currentNodeInfo);
