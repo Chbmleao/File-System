@@ -22,6 +22,25 @@
 #define RD_WR_OTHER S_IROTH | S_IWOTH
 #define RD_WR_ALL RD_WR_OWNER | RD_WR_GROUP | RD_WR_OTHER
 
+void copyInode(struct inode *src, struct inode *dest, struct nodeinfo *srcNodeInfo){
+	if(src->mode == IMDIR){
+		for(int i = 0; i < srcNodeInfo->size; i++) 
+			dest->links[i] = src->links[i];
+	}
+	dest->meta = src->meta;
+	dest->next = src->next;
+	dest->parent = src->parent;
+	dest->mode = src->mode;
+}
+
+void copyInodeInfo(struct nodeinfo *src, struct nodeinfo *dest){
+	dest->size = src->size;
+	for(int i = 0; i < 7; i++)
+		dest->reserved[i] = src->reserved[i];
+	
+	strcat(dest->name, src->name);
+}
+
 struct superblock * fs_format(const char *fname, uint64_t blocksize) {
   long int size_bytes;
   FILE* storage;
@@ -766,8 +785,8 @@ int fs_mkdir(struct superblock *sb, const char *dname) {
     }
 
     // Read the next folder
-    inode1 = inode2; // TODO: attention copy_inode
-    nodeInfo1 = nodeInfo2; // TODO: attention copy_nodeinfo
+    copyInode(inode2, inode1, nodeInfo2);
+    copyInodeInfo(nodeInfo2, nodeInfo1);
   }
 
   // Stores the new iNode nodeinfo
@@ -891,12 +910,12 @@ int fs_rmdir(struct superblock *sb, const char *dname) {
       read(sb->fd, inode1, sb->blksz);
     }
 
-    inodeParent = inode1; // TODO: attention copy_inode
-    nodeInfoParent = nodeInfo1; // TODO: attention copy_nodeinfo
+    copyInode(inode1, inodeParent, nodeInfo1);
+    copyInodeInfo(nodeInfo1, nodeInfoParent);
 
     // Read the next folder
-    inode1 = inode2; // TODO: attention copy_inode
-    nodeInfo1 = nodeInfo2; // TODO: attention copy_nodeinfo
+    copyInode(inode2, inode1, nodeInfo2);
+    copyInodeInfo(nodeInfo2, nodeInfo1);
   }
   
   // Check if the directory is empty
@@ -1012,8 +1031,8 @@ char * fs_list_dir(struct superblock *sb, const char *dname) {
     }
 
     // Read the next folder
-    inode1 = inode2; // TODO: attention copy_inode
-    nodeInfo1 = nodeInfo2; // TODO: attention copy_nodeinfo
+    copyInode(inode2, inode1, nodeInfo2);
+    copyInodeInfo(nodeInfo2, nodeInfo1);
   }
 
   char *list = (char*) malloc(nodeInfo1->size * sizeof(char));
