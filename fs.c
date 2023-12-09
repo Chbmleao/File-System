@@ -11,6 +11,10 @@
 #include "fs.h"
 
 #define FS_MAGIC_NUMBER 0xdcc605f5
+#define MAX_NAME 100 // File name max size
+#define MAX_SUBFOLDERS 100 // Max number of subfolders in a file path
+#define MAX_FILE_SIZE 5000 // Max number of blocks in a file
+#define MAX_PATH_NAME 4000 // File path max size
 
 // Permissions constants
 #define RD_WR_OWNER S_IRUSR | S_IWUSR 
@@ -457,5 +461,114 @@ int fs_rmdir(struct superblock *sb, const char *dname) {
 }
 
 char * fs_list_dir(struct superblock *sb, const char *dname) {
-  
+  struct inode *inode1 = (struct inode*) malloc(sb->blksz);
+  struct nodeinfo *nodeInfo1 = (struct nodeinfo*) malloc(sb->blksz);
+  struct inode *inode2 = (struct inode*) malloc(sb->blksz);
+  struct nodeinfo *nodeInfo2 = (struct nodeinfo*) malloc(sb->blksz);
+
+  // TODO: verify if this works
+  // char * name = (char*) malloc(MAX_PATH_NAME*sizeof(char));
+	// strcpy(name, dname);
+
+
+  // Get a vector of string with the path levels
+  int i = 0;
+  char files[MAX_SUBFOLDERS][MAX_NAME];
+  char *token = strtok(dname, "/");
+  while(token != NULL){
+    strcpy(files[i], token);
+    token = strtok(NULL, "/");
+    i++;
+  }
+  int numSubfolders = i;
+
+  // Get the root directory iNode
+  lseek(sb->fd, sb->blksz * sb->root, SEEK_SET);
+  read(sb->fd, inode1, sb->blksz);
+
+  // Get the root directory nodeinfo
+  lseek(sb->fd, sb->blksz * 1, SEEK_SET);
+  read(sb->fd, nodeInfo1, sb->blksz);
+
+  // Search for the file in using the path trough root directory
+  for (int j = 0; j < numSubfolders; j++) {
+    // Infinite loop until check all the subpaths in the path
+    while(1) {
+      int found = 0;
+      // Check if the current iNode is a subfolder or file
+      int k;
+      for(k = 0; k < nodeInfo1->size; k++) {
+        // Read the inode from the file
+        lseek(sb->fd, inode1->links[k] * sb->blksz, SEEK_SET);
+        read(sb->fd, inode2, sb->blksz);
+
+        // Deal with the case where current is child node
+        if(inode2->mode == IMCHILD) {
+          lseek(sb->fd, inode2->parent * sb->blksz, SEEK_SET);
+          read(sb->fd, inode2, sb->blksz);
+        }
+
+        // Get's nodeinfo from the inode
+        lseek(sb->fd, inode2->meta * sb->blksz, SEEK_SET);
+        read(sb->fd, nodeInfo2, sb->blksz);
+
+        // Check by the path name if it matches with the current nodeinfo
+        if(strcmp(nodeInfo2->name, files[j]) == 0) {
+          found = 1;
+          break;
+        }
+      }
+    
+      if (found == 1) {
+        // The current node is the subfolder or file we are looking for
+        break;
+      } else if (j == (numSubfolders - 1) || inode1->next == 0) {
+        // The directory does not exists
+        errno = ENOENT;
+        char *elements = (char*) malloc(3 * sizeof(char));
+        strcpy(elements, "-1");
+        return elements;
+      } 
+
+      lseek(sb->fd, inode1->next * sb->blksz, SEEK_SET);
+      read(sb->fd, inode1, sb->blksz);
+    }
+
+    // Read the next folder
+    inode1 = inode2; // TODO: attention copy_inode
+    nodeInfo1 = nodeInfo2; // TODO: attention copy_nodeinfo
+  }
+
+  char *files = (char*) malloc(nodeInfo1->size * sizeof(char));
+
+  // Read the nodeinfo of the subfolder
+  for(int j = 0; j < nodeInfo1->size; j++) {
+    // Read the inode from the file
+    lseek(sb->fd, inode1->links[j] * sb->blksz, SEEK_SET);
+    read(sb->fd, inode2, sb->blksz);
+
+    // Deal with the case where current is child node
+    if(inode2->mode == IMCHILD) {
+      lseek(sb->fd, inode2->parent * sb->blksz, SEEK_SET);
+      read(sb->fd, inode2, sb->blksz);
+    }
+
+    // Get's nodeinfo from the inode
+    lseek(sb->fd, inode2->meta * sb->blksz, SEEK_SET);
+    read(sb->fd, nodeInfo2, sb->blksz);
+
+    // Concatenate the name of the file to the files string
+    strcat(files, nodeInfo2->name);
+    
+    // If current is a subfolder, add a '/' to the end of the name
+    if(inode2->mode == IMDIR) {
+      strcat(files, "/");
+    }
+
+    if (j < nodeInfo1->size - 1) {
+      strcat(files, " ");
+    }
+  }
+
+  return files;
 }
