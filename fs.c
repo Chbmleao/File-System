@@ -588,7 +588,129 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
 }
 
 ssize_t fs_read_file(struct superblock *sb, const char *fname, char *buf, size_t bufsz) {
+  size_t initialBufsz = bufsz;
+  // Get a vector of string with the path levels
+  char path_vector[128][128];
+  int path_depth = explorePath(fname, path_vector);
 
+  // Get the root directory nodeinfo
+  struct nodeinfo *root_node_info = (struct nodeinfo*) malloc(sb->blksz);
+  int root_nodeinfo_index = 1;
+  lseek(sb->fd, root_nodeinfo_index * sb->blksz, SEEK_SET);
+  read(sb->fd, root_node_info, sb->blksz);
+
+  // Get the root directory inode
+  struct inode *root_inode = (struct inode*) malloc(sb->blksz);
+  lseek(sb->fd, sb->root * sb->blksz, SEEK_SET);
+  read(sb->fd, root_inode, sb->blksz);
+
+  // Initialize the vector of block indexes
+  uint64_t block_indexes[4096];
+  block_indexes[0] = 1; // root nodeinfo index
+  block_indexes[1] = sb->root; // root inode index
+
+  struct inode *fileParentINode = iNodeFactory(root_inode, root_node_info, sb->blksz);
+  struct nodeinfo *fileParentNodeInfo = nodeInfoFactory(root_node_info, sb->blksz);
+
+  uint64_t parentOfFileParentNodeInfoIdx = (uint64_t) 1;
+  uint64_t parentOfFileParentINodeIdx = (uint64_t) 2;
+
+  uint64_t is_new_file = 0;
+  struct inode *previousInode = iNodeFactory(root_inode, root_node_info, sb->blksz);
+  struct inode *currentInode = (struct inode*) malloc(sb->blksz);
+
+  struct nodeinfo *previousNodeInfo = nodeInfoFactory(root_node_info, sb->blksz);
+  struct nodeinfo *currentNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
+
+  free(root_inode);
+  free(root_node_info);
+
+  int subpath_exists = 0;
+  // Search for the file in using the path trough root directory
+  for(int i = 0; i < path_depth; i++) {
+    // Infinite loop until check all the subpaths in the path
+    while(1) {
+      subpath_exists = 0;
+      int j;
+      for(j = 0; j < previousNodeInfo->size; j++) {
+        // Read the inode from the file
+        lseek(sb->fd, previousInode->links[j]*sb->blksz, SEEK_SET);
+        read(sb->fd, currentInode, sb->blksz);
+
+        // Deal with the case where current is child node
+        if(currentInode->mode == IMCHILD) {
+          lseek(sb->fd, currentInode->parent*sb->blksz, SEEK_SET);
+          read(sb->fd, currentInode, sb->blksz);
+        }
+
+        // Get's nodeinfo from the inode
+        lseek(sb->fd, currentInode->meta*sb->blksz, SEEK_SET);
+        read(sb->fd, currentNodeInfo, sb->blksz);
+
+        // Check by the path name if it matches with the current nodeinfo
+        if(!strcmp(currentNodeInfo->name, path_vector[i])){
+					subpath_exists = 1;
+					break;
+				}
+      }
+    
+      if(subpath_exists == 1) {
+        // The current node is a subfolder or file
+        if(i == (path_depth - 1)) {
+          // The current node is the file
+          block_indexes[0] = currentInode->meta;
+          block_indexes[1] = previousInode->links[j];
+          root_node_info->size += 1;
+          is_new_file = 0;
+        } else {
+          // Updates the inode parents
+          fileParentINode = iNodeFactory(currentInode, currentNodeInfo, sb->blksz);
+          fileParentNodeInfo = nodeInfoFactory(currentNodeInfo, sb->blksz);
+
+          parentOfFileParentINodeIdx = previousInode->links[j];
+          parentOfFileParentNodeInfoIdx = currentInode->meta;
+        }
+        break;
+      } else {
+        // Current node does no point to the file nor a subfolder
+        if(i == (path_depth - 1) || !previousInode->next) {
+          // File or folder does not exists.
+          errno = ENOENT;
+          return -1;
+        }
+        break;
+      }
+
+      // Read the next inode
+      lseek(sb->fd, previousInode->next*sb->blksz, SEEK_SET);
+      read(sb->fd, previousInode, sb->blksz);
+    }
+
+    // Read the next folder
+    previousInode = iNodeFactory(currentInode, currentNodeInfo, sb->blksz);
+    previousInode = nodeInfoFactory(currentNodeInfo, sb->blksz);
+  }
+
+  // Get amount of blocks being used by the file node
+  int blocks_currently_being_used = CEILING((float)previousNodeInfo->size/((float)sb->blksz-20.0));
+
+  int block_idx = 2; // first 2 position of block_indexes already used
+  currentInode = iNodeFactory(previousInode, previousNodeInfo, sb->blksz);
+  // Maps the blocks already being used to the block_indexes vector
+  while(currentInode->next != 0 || bufsz <= 0) {
+    block_indexes[block_idx] = previousInode->next; // all already being used
+    lseek(sb->fd, previousInode->next*sb->blksz, SEEK_SET);
+    read(sb->fd, currentInode, sb->blksz);
+
+    lseek(sb->fd, (previousInode->next*sb->blksz) + 20, SEEK_SET);
+    read(sb->fd, buf, sb->blksz - 20);
+    buf += sb->blksz - 20;
+    bufsz -= sb->blksz - 20;
+
+    block_idx++;
+  }
+
+  return (initialBufsz - bufsz);
 }
 
 int fs_unlink(struct superblock *sb, const char *fname) {
