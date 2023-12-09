@@ -17,9 +17,6 @@
 
 // Permissions constants
 #define RD_WR_OWNER S_IRUSR | S_IWUSR 
-#define RD_WR_GROUP S_IRGRP | S_IWGRP
-#define RD_WR_OTHER S_IROTH | S_IWOTH
-#define RD_WR_ALL RD_WR_OWNER | RD_WR_GROUP | RD_WR_OTHER
 
 struct inode* iNodeFactory(struct inode *src, struct nodeinfo *srcNodeInfo, int blocksize){
 	struct inode *newINode = (struct inode*) malloc(blocksize);
@@ -74,7 +71,7 @@ struct superblock * fs_format(const char *fname, uint64_t blocksize) {
 	}
 
   // Open file
-  storage = fopen(fname, "r+"); //TODO: attention
+  storage = fopen(fname, "r+");
   if(storage == NULL){
     errno = ENOENT;
     return NULL;
@@ -94,7 +91,7 @@ struct superblock * fs_format(const char *fname, uint64_t blocksize) {
   }
 
   // Allocate superblock space
-  struct superblock *sb = (struct superblock*) malloc(blocksize); // TODO: try to change
+  struct superblock *sb = (struct superblock*) malloc(blocksize);
   if(sb == NULL){
     errno = ENOSPC;
     return NULL;
@@ -114,7 +111,7 @@ struct superblock * fs_format(const char *fname, uint64_t blocksize) {
   sb->freelist = 3; // first free block index
 
   // Open file with read and write permissions using linux default API
-  sb->fd = open(fname, O_RDWR, RD_WR_ALL); //TODO: try to change
+  sb->fd = open(fname, O_RDWR, RD_WR_OWNER);
 
   if(sb->fd < 0) {
     // Error opening file
@@ -141,7 +138,7 @@ struct superblock * fs_format(const char *fname, uint64_t blocksize) {
 
   node_info->size = 0;
   // Sets the name of the root directory \0 is the end of the string
-  strcpy(node_info->name, "/\0"); // TODO: try to change
+  strcpy(node_info->name, "/");
   write(sb->fd, node_info, blocksize);
   free(node_info);
 
@@ -178,7 +175,7 @@ struct superblock * fs_format(const char *fname, uint64_t blocksize) {
 }
 
 struct superblock * fs_open(const char *fname) {
-  int file_descriptor = open(fname, O_RDWR, RD_WR_ALL); // TODO: attention
+  int file_descriptor = open(fname, O_RDWR, RD_WR_OWNER);
 
   if(file_descriptor < 0) {
     // Error opening file
@@ -195,7 +192,7 @@ struct superblock * fs_open(const char *fname) {
   }
 
   struct superblock *sb = (struct superblock*) malloc(sizeof(struct superblock));
-  lseek(file_descriptor, 0, SEEK_SET); // TODO: try to change
+  lseek(file_descriptor, 0, SEEK_SET);
 
   // Read superblock from file
   if(read(file_descriptor, sb, sizeof(struct superblock)) < 0){
@@ -209,7 +206,7 @@ struct superblock * fs_open(const char *fname) {
   // Check by superblock if the file is from dcc605 file system
   if(sb->magic != FS_MAGIC_NUMBER){
     // File is not from dcc605 file system
-    flock(file_descriptor, LOCK_NB | LOCK_UN); // TODO: try to change
+    flock(file_descriptor, LOCK_NB | LOCK_UN);
     close(file_descriptor);
     free(sb);
     errno = EBADF;
@@ -233,7 +230,7 @@ int fs_close(struct superblock *sb) {
   }
 
   // Unlock file
-  if(flock(sb->fd, LOCK_NB | LOCK_UN) < 0) { //Todo: try to change
+  if(flock(sb->fd, LOCK_NB | LOCK_UN) < 0) {
     // Error unlocking file
     errno = EBUSY;
     return -1;
@@ -279,7 +276,7 @@ uint64_t fs_get_block(struct superblock *sb) {
     // Error reading first free block
     free(first_fp);
     errno = ENOENT;
-    return (uint64_t) 0; //TODO: attention
+    return (uint64_t) 0;
   }
 
   // Gets the first free block address
@@ -440,7 +437,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
           currentNodeInfo->size = sb->blksz - 20;
 
           // Store it in a free block
-          block_indexes[0] = fs_get_block(sb); //TODO: attention
+          block_indexes[0] = fs_get_block(sb);
 
           // Store info of new inode
           currentInode->mode = IMREG;
@@ -449,7 +446,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
           currentInode->next = 0;
 
           // Store it in a free block
-          block_indexes[1] = fs_get_block(sb); //TODO: attention
+          block_indexes[1] = fs_get_block(sb);
 
           is_new_file = 1;
         } else if(previousInode->next == 0) {
@@ -504,7 +501,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
       }
 
       // Gets free blocks to store the file
-      for(int i = blocks_currently_being_used + 1; i <= blocks_needed; i++) { //TODO: try to change blocks_used => block idx
+      for(int i = block_idx + 1; i <= blocks_needed; i++) {
         block_indexes[i] = fs_get_block(sb);
       }
     } else {
@@ -521,7 +518,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
       }
 
       // Deallocates the blocks that will not be used anymore
-      for(int i = blocks_currently_being_used; i > blocks_currently_being_used; i--) {
+      for(int i = block_idx; i > blocks_currently_being_used; i--) {
         int fs_put_block_output = fs_put_block(sb, block_indexes[i]);
         if(fs_put_block_output != 0) return fs_put_block_output;
       }
@@ -576,7 +573,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
     write(sb->fd, buf, sb->blksz - 20);
 
     // Update buffer pointer
-    buf += sb->blksz - 20; //TODO: attention
+    buf += sb->blksz - 20;
   }
 
   // Writes superblock to file
@@ -1073,10 +1070,9 @@ char * fs_list_dir(struct superblock *sb, const char *dname) {
     previousNodeInfo = nodeInfoFactory(currentNodeInfo, sb->blksz);
   }
 
-  char *list = (char*) malloc(4096 * sizeof(char));
+  char *dirContent = (char*) malloc(4096 * sizeof(char));
 
   // Read the nodeinfo of the subfolder
-	int pos = 0;
   for(int i = 0; i < previousNodeInfo->size; i++) {
     // Read the inode from the file
     lseek(sb->fd, previousInode->links[i] * sb->blksz, SEEK_SET);
@@ -1092,23 +1088,21 @@ char * fs_list_dir(struct superblock *sb, const char *dname) {
     lseek(sb->fd, currentInode->meta * sb->blksz, SEEK_SET);
     read(sb->fd, currentNodeInfo, sb->blksz);
 
-    // Concatenate the name of the file to the list string
-    strcpy((list+pos), currentNodeInfo->name);
-		pos += strlen(currentNodeInfo->name);
+    // Concatenate the name of the file to the dirContent string
+    strcat(dirContent, currentNodeInfo->name);
     
     // If current is a subfolder, add a '/' to the end of the name
-    if(currentInode->mode == IMDIR) {
-      list[pos] = '/';
-			list[pos+1] = '\0';
-			pos++;
-    }
-
-    if (i < previousNodeInfo->size - 1) {
-      list[pos] = ' ';
-			list[pos+1] = '\0';
-			pos++;
-    }
+    if(currentInode->mode == IMDIR) 
+      strcat(dirContent, "/");
+    
+    strcat(dirContent, " ");
   }
 
-  return list;
+  // Remove the last space by overwriting it with the null terminator
+  size_t len = strlen(dirContent);
+  if (len > 0) {
+    dirContent[len - 1] = '\0';
+  }
+
+  return dirContent;
 }
