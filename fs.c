@@ -738,8 +738,11 @@ int fs_mkdir(struct superblock *sb, const char *dname) {
   struct inode *inode2 = (struct inode*) malloc(sb->blksz);
   struct nodeinfo *nodeInfo2 = (struct nodeinfo*) malloc(sb->blksz);
 
+  char *name = (char*) malloc(MAX_PATH_NAME*sizeof(char));
+	strcpy(name, dname);
+	
   int i = 0;
-  char *token = strtok(dname, "/");
+  char *token = strtok(name, "/");
   char files[MAX_SUBFOLDERS][MAX_NAME];
   while(token != NULL){
     strcpy(files[i], token);
@@ -748,20 +751,20 @@ int fs_mkdir(struct superblock *sb, const char *dname) {
   }
   int numSubfolders = i;
 
+  // Get the root directory nodeinfo
+  lseek(sb->fd, sb->blksz, SEEK_SET);
+  read(sb->fd, nodeInfo1, sb->blksz);
+
   // Get the root directory iNode
   lseek(sb->fd, sb->blksz * sb->root, SEEK_SET);
   read(sb->fd, inode1, sb->blksz);
-
-  // Get the root directory nodeinfo
-  lseek(sb->fd, sb->blksz * 1, SEEK_SET);
-  read(sb->fd, nodeInfo1, sb->blksz);
 
   uint64_t blocks[MAX_FILE_SIZE];
   blocks[0] = 1;
   blocks[1] = 2; 
 
   // Search for the file in using the path trough root directory
-  for (int j = 0; j < numSubfolders; j++) {
+  for (int j = 0; j < numSubfolders-1; j++) {
     // Infinite loop until check all the subpaths in the path
     while(1) {
       int found = 0;
@@ -791,12 +794,12 @@ int fs_mkdir(struct superblock *sb, const char *dname) {
     
       if (found == 1) {
         // The current node is the subfolder or file we are looking for
-        if (j == numSubfolders-2) {
+        if (j == (numSubfolders-2)) {
           blocks[0] = inode2->meta;
           blocks[1] = inode1->links[k];
         }
         break;
-      } else if (j == numSubfolders - 1 || inode1->next == 0) {
+      } else if (j == (numSubfolders - 2) || inode1->next == 0) {
         // The directory does not exists
         errno = ENOENT;
         return -1;
@@ -814,7 +817,7 @@ int fs_mkdir(struct superblock *sb, const char *dname) {
   // Stores the new iNode nodeinfo
   uint64_t block_info = fs_get_block(sb);
   nodeInfo2->size = 0;
-  strcat(nodeInfo2->name, files[numSubfolders-1]);
+  strcpy(nodeInfo2->name, files[numSubfolders-1]);
 
   // Write the nodeinfo
   lseek(sb->fd, block_info * sb->blksz, SEEK_SET);
@@ -823,7 +826,7 @@ int fs_mkdir(struct superblock *sb, const char *dname) {
   // Stores the new iNode
   uint64_t block_inode = fs_get_block(sb);
   inode2->mode = IMDIR;
-  inode2->parent = blocks[1];
+  inode2->parent = block_inode;
   inode2->meta = block_info;
   inode2->next = 0;
 
@@ -835,13 +838,13 @@ int fs_mkdir(struct superblock *sb, const char *dname) {
   inode1->links[nodeInfo1->size] = block_inode;
   nodeInfo1->size += 1;
 
-  // Write the inode
-  lseek(sb->fd, blocks[1] * sb->blksz, SEEK_SET);
-  write(sb->fd, inode1, sb->blksz);
-
   // Write the nodeinfo
   lseek(sb->fd, blocks[0] * sb->blksz, SEEK_SET);
   write(sb->fd, nodeInfo1, sb->blksz);
+
+  // Write the inode
+  lseek(sb->fd, blocks[1] * sb->blksz, SEEK_SET);
+  write(sb->fd, inode1, sb->blksz);
 
   // Updates superblock
   lseek(sb->fd, 0, SEEK_SET);
@@ -858,8 +861,11 @@ int fs_rmdir(struct superblock *sb, const char *dname) {
   struct inode *inodeParent = (struct inode*) malloc(sb->blksz);
   struct nodeinfo *nodeInfoParent = (struct nodeinfo*) malloc(sb->blksz);
 
+  char *name = (char*) malloc(MAX_PATH_NAME*sizeof(char));
+	strcpy(name, dname);
+	
   int i = 0;
-  char *token = strtok(dname, "/");
+  char *token = strtok(name, "/");
   char files[MAX_SUBFOLDERS][MAX_NAME];
   while(token != NULL){
     strcpy(files[i], token);
@@ -961,11 +967,11 @@ int fs_rmdir(struct superblock *sb, const char *dname) {
     }
   }
 
-  nodeInfoParent->size -= 1;
-
   // Write the inode
   lseek(sb->fd, parentInodeRoot * sb->blksz, SEEK_SET);
   write(sb->fd, inodeParent, sb->blksz);
+
+  nodeInfoParent->size -= 1;
 
   // Write the nodeinfo
   lseek(sb->fd, parentInfoRoot * sb->blksz, SEEK_SET);
@@ -984,15 +990,13 @@ char * fs_list_dir(struct superblock *sb, const char *dname) {
   struct inode *inode2 = (struct inode*) malloc(sb->blksz);
   struct nodeinfo *nodeInfo2 = (struct nodeinfo*) malloc(sb->blksz);
 
-  // TODO: verify if this works
-  // char * name = (char*) malloc(MAX_PATH_NAME*sizeof(char));
-	// strcpy(name, dname);
-
-
   // Get a vector of string with the path levels
+  char *name = (char*) malloc(MAX_PATH_NAME*sizeof(char));
+	strcpy(name, dname);
+	
   int i = 0;
+  char *token = strtok(name, "/");
   char files[MAX_SUBFOLDERS][MAX_NAME];
-  char *token = strtok(dname, "/");
   while(token != NULL){
     strcpy(files[i], token);
     token = strtok(NULL, "/");
@@ -1044,7 +1048,7 @@ char * fs_list_dir(struct superblock *sb, const char *dname) {
         // The directory does not exists
         errno = ENOENT;
         char *elements = (char*) malloc(3 * sizeof(char));
-        strcat(elements, "-1"); // TODO: change this to test if works
+        strcpy(elements, "-1"); // TODO: change this to test if works
         return elements;
       } 
 
@@ -1057,9 +1061,10 @@ char * fs_list_dir(struct superblock *sb, const char *dname) {
     copyInodeInfo(nodeInfo2, nodeInfo1);
   }
 
-  char *list = (char*) malloc(nodeInfo1->size * sizeof(char));
+  char *list = (char*) malloc(MAX_PATH_NAME * sizeof(char));
 
   // Read the nodeinfo of the subfolder
+	int pos = 0;
   for(int j = 0; j < nodeInfo1->size; j++) {
     // Read the inode from the file
     lseek(sb->fd, inode1->links[j] * sb->blksz, SEEK_SET);
@@ -1076,15 +1081,20 @@ char * fs_list_dir(struct superblock *sb, const char *dname) {
     read(sb->fd, nodeInfo2, sb->blksz);
 
     // Concatenate the name of the file to the list string
-    strcat(list, nodeInfo2->name);
+    strcpy((list+pos), nodeInfo2->name);
+		pos += strlen(nodeInfo2->name);
     
     // If current is a subfolder, add a '/' to the end of the name
     if(inode2->mode == IMDIR) {
-      strcat(list, "/");
+      list[pos] = '/';
+			list[pos+1] = '\0';
+			pos++;
     }
 
     if (j < nodeInfo1->size - 1) {
-      strcat(list, " ");
+      list[pos] = ' ';
+			list[pos+1] = '\0';
+			pos++;
     }
   }
 
