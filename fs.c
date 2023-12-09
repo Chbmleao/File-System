@@ -729,118 +729,135 @@ int fs_unlink(struct superblock *sb, const char *fname) {
 }
 
 int fs_mkdir(struct superblock *sb, const char *dname) {
-  struct inode *inode1 = (struct inode*) malloc(sb->blksz);
-  struct nodeinfo *nodeInfo1 = (struct nodeinfo*) malloc(sb->blksz);
-  struct inode *inode2 = (struct inode*) malloc(sb->blksz);
-  struct nodeinfo *nodeInfo2 = (struct nodeinfo*) malloc(sb->blksz);
-
-  char *name = (char*) malloc(4096*sizeof(char));
-	strcpy(name, dname);
+  char *file_path = (char*) malloc(4096*sizeof(char));
+	strcpy(file_path, dname);
 	
-  int i = 0;
-  char *token = strtok(name, "/");
-  char files[128][128];
-  while(token != NULL){
-    strcpy(files[i], token);
-    token = strtok(NULL, "/");
-    i++;
+	// Get a vector of string with the path levels
+  int path_depth = 0;
+  char path_vector[128][128];
+
+  char *path_level = strtok(file_path, "/");
+  while(path_level != NULL){
+    strcpy(path_vector[path_depth], path_level);
+    path_level = strtok(NULL, "/");
+    path_depth++;
   }
-  int numSubfolders = i;
 
   // Get the root directory nodeinfo
-  lseek(sb->fd, sb->blksz, SEEK_SET);
-  read(sb->fd, nodeInfo1, sb->blksz);
+  struct nodeinfo *root_node_info = (struct nodeinfo*) malloc(sb->blksz);
+  int root_nodeinfo_index = 1;
+  lseek(sb->fd, root_nodeinfo_index * sb->blksz, SEEK_SET);
+  read(sb->fd, root_node_info, sb->blksz);
 
-  // Get the root directory iNode
-  lseek(sb->fd, sb->blksz * sb->root, SEEK_SET);
-  read(sb->fd, inode1, sb->blksz);
+  // Get the root directory inode
+  struct inode *root_inode = (struct inode*) malloc(sb->blksz);
+  lseek(sb->fd, sb->root * sb->blksz, SEEK_SET);
+  read(sb->fd, root_inode, sb->blksz);
 
-  uint64_t blocks[4096];
-  blocks[0] = 1;
-  blocks[1] = 2; 
+  // Initialize the vector of block indexes
+  uint64_t block_indexes[4096];
+  block_indexes[0] = 1; // root nodeinfo index
+  block_indexes[1] = sb->root; // root inode index
 
+  struct inode *fileParentINode = (struct inode*) malloc(sb->blksz);
+  struct nodeinfo *fileParentNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
+  fileParentINode = iNodeFactory(root_inode, root_node_info, sb->blksz);
+
+  uint64_t parentOfFileParentNodeInfoIdx = (uint64_t) 1;
+  uint64_t parentOfFileParentINodeIdx = (uint64_t) 2;
+
+  struct inode *previousInode = (struct inode*) malloc(sb->blksz);
+  struct inode *currentInode = (struct inode*) malloc(sb->blksz);
+  previousInode = iNodeFactory(root_inode, root_node_info, sb->blksz);
+
+  struct nodeinfo *previousNodeInfo = nodeInfoFactory(root_node_info, sb->blksz);
+  struct nodeinfo *currentNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
+
+  free(root_inode);
+  free(root_node_info);
+
+  int subpath_exists = 0;
   // Search for the file in using the path trough root directory
-  for (int j = 0; j < numSubfolders-1; j++) {
+  for(int i = 0; i < path_depth-1; i++) {
     // Infinite loop until check all the subpaths in the path
     while(1) {
-      int found = 0;
-      // Check if the current iNode is a subfolder or file
-      int k;
-      for(k = 0; k < nodeInfo1->size; k++) {
+      subpath_exists = 0;
+      int j;
+      for(j = 0; j < previousNodeInfo->size; j++) {
         // Read the inode from the file
-        lseek(sb->fd, inode1->links[k] * sb->blksz, SEEK_SET);
-        read(sb->fd, inode2, sb->blksz);
+        lseek(sb->fd, previousInode->links[j]*sb->blksz, SEEK_SET);
+        read(sb->fd, currentInode, sb->blksz);
 
         // Deal with the case where current is child node
-        if(inode2->mode == IMCHILD) {
-          lseek(sb->fd, inode2->parent * sb->blksz, SEEK_SET);
-          read(sb->fd, inode2, sb->blksz);
+        if(currentInode->mode == IMCHILD) {
+          lseek(sb->fd, currentInode->parent*sb->blksz, SEEK_SET);
+          read(sb->fd, currentInode, sb->blksz);
         }
 
         // Get's nodeinfo from the inode
-        lseek(sb->fd, inode2->meta * sb->blksz, SEEK_SET);
-        read(sb->fd, nodeInfo2, sb->blksz);
+        lseek(sb->fd, currentInode->meta*sb->blksz, SEEK_SET);
+        read(sb->fd, currentNodeInfo, sb->blksz);
 
         // Check by the path name if it matches with the current nodeinfo
-        if(strcmp(nodeInfo2->name, files[j]) == 0) {
-          found = 1;
-          break;
-        }
+        if(strcmp(currentNodeInfo->name, path_vector[i]) == 0){
+					subpath_exists = 1;
+					break;
+				}
       }
     
-      if (found == 1) {
+      if (subpath_exists == 1) {
         // The current node is the subfolder or file we are looking for
-        if (j == (numSubfolders-2)) {
-          blocks[0] = inode2->meta;
-          blocks[1] = inode1->links[k];
+        if (i == (path_depth - 2)) {
+          block_indexes[0] = currentInode->meta;
+          block_indexes[1] = previousInode->links[j];
         }
         break;
-      } else if (j == (numSubfolders - 2) || inode1->next == 0) {
+      } else if (i == (path_depth - 2) || previousInode->next == 0) {
         // The directory does not exists
         errno = ENOENT;
         return -1;
       } 
 
-      lseek(sb->fd, inode1->next * sb->blksz, SEEK_SET);
-      read(sb->fd, inode1, sb->blksz);
+      lseek(sb->fd, previousInode->next * sb->blksz, SEEK_SET);
+      read(sb->fd, previousInode, sb->blksz);
     }
 
     // Read the next folder
-    inode1 = iNodeFactory(inode2, nodeInfo2, sb->blksz);
-    nodeInfo1 = nodeInfoFactory(nodeInfo2, sb->blksz);
+    previousInode = iNodeFactory(currentInode, currentNodeInfo, sb->blksz);
+    previousNodeInfo = nodeInfoFactory(currentNodeInfo, sb->blksz);
   }
 
   // Stores the new iNode nodeinfo
   uint64_t block_info = fs_get_block(sb);
-  nodeInfo2->size = 0;
-  strcpy(nodeInfo2->name, files[numSubfolders-1]);
+  currentNodeInfo->size = 0;
+  strcpy(currentNodeInfo->name, path_vector[path_depth-1]);
 
   // Write the nodeinfo
   lseek(sb->fd, block_info * sb->blksz, SEEK_SET);
-  write(sb->fd, nodeInfo2, sb->blksz);
+  write(sb->fd, currentNodeInfo, sb->blksz);
 
   // Stores the new iNode
   uint64_t block_inode = fs_get_block(sb);
-  inode2->mode = IMDIR;
-  inode2->parent = block_inode;
-  inode2->meta = block_info;
-  inode2->next = 0;
+  currentInode->mode = IMDIR;
+  currentInode->parent = block_inode;
+  currentInode->meta = block_info;
+  currentInode->next = 0;
 
   // Write the inode
   lseek(sb->fd, block_inode * sb->blksz, SEEK_SET);
-  write(sb->fd, inode2, sb->blksz);
+  write(sb->fd, currentInode, sb->blksz);
 
   // Stores the new iNode as a child of the parent node
-  inode1->links[nodeInfo1->size] = block_inode;
-  nodeInfo1->size += 1;
+  previousInode->links[previousNodeInfo->size] = block_inode;
+  previousNodeInfo->size += 1;
 
   // Write the nodeinfo
-  lseek(sb->fd, blocks[0] * sb->blksz, SEEK_SET);
-  write(sb->fd, nodeInfo1, sb->blksz);
+  lseek(sb->fd, block_indexes[0] * sb->blksz, SEEK_SET);
+  write(sb->fd, previousNodeInfo, sb->blksz);
 
   // Write the inode
-  lseek(sb->fd, blocks[1] * sb->blksz, SEEK_SET);
-  write(sb->fd, inode1, sb->blksz);
+  lseek(sb->fd, block_indexes[1] * sb->blksz, SEEK_SET);
+  write(sb->fd, previousInode, sb->blksz);
 
   // Updates superblock
   lseek(sb->fd, 0, SEEK_SET);
@@ -850,113 +867,125 @@ int fs_mkdir(struct superblock *sb, const char *dname) {
 }
 
 int fs_rmdir(struct superblock *sb, const char *dname) {
-  struct inode *inode1 = (struct inode*) malloc(sb->blksz);
-  struct nodeinfo *nodeInfo1 = (struct nodeinfo*) malloc(sb->blksz);
-  struct inode *inode2 = (struct inode*) malloc(sb->blksz);
-  struct nodeinfo *nodeInfo2 = (struct nodeinfo*) malloc(sb->blksz);
-  struct inode *inodeParent = (struct inode*) malloc(sb->blksz);
-  struct nodeinfo *nodeInfoParent = (struct nodeinfo*) malloc(sb->blksz);
-
-  char *name = (char*) malloc(4096*sizeof(char));
-	strcpy(name, dname);
+  char *file_path = (char*) malloc(4096*sizeof(char));
+	strcpy(file_path, dname);
 	
-  int i = 0;
-  char *token = strtok(name, "/");
-  char files[128][128];
-  while(token != NULL){
-    strcpy(files[i], token);
-    token = strtok(NULL, "/");
-    i++;
-  }
-  int numSubfolders = i;
+	// Get a vector of string with the path levels
+  int path_depth = 0;
+  char path_vector[128][128];
 
-  // Get the root directory iNode
-  lseek(sb->fd, sb->blksz * sb->root, SEEK_SET);
-  read(sb->fd, inode1, sb->blksz);
+  char *path_level = strtok(file_path, "/");
+  while(path_level != NULL){
+    strcpy(path_vector[path_depth], path_level);
+    path_level = strtok(NULL, "/");
+    path_depth++;
+  }
 
   // Get the root directory nodeinfo
-  lseek(sb->fd, sb->blksz * 1, SEEK_SET);
-  read(sb->fd, nodeInfo1, sb->blksz);
+  struct nodeinfo *root_node_info = (struct nodeinfo*) malloc(sb->blksz);
+  int root_nodeinfo_index = 1;
+  lseek(sb->fd, root_nodeinfo_index * sb->blksz, SEEK_SET);
+  read(sb->fd, root_node_info, sb->blksz);
 
-  uint64_t blocks[4096];
-  blocks[0] = 1;
-  blocks[1] = 2; 
+  // Get the root directory inode
+  struct inode *root_inode = (struct inode*) malloc(sb->blksz);
+  lseek(sb->fd, sb->root * sb->blksz, SEEK_SET);
+  read(sb->fd, root_inode, sb->blksz);
 
-  int parentInfoRoot = 1;
-  int parentInodeRoot = 2;
+  // Initialize the vector of block indexes
+  uint64_t block_indexes[4096];
+  block_indexes[0] = 1; // root nodeinfo index
+  block_indexes[1] = sb->root; // root inode index
 
+  struct inode *dirParentINode = (struct inode*) malloc(sb->blksz);
+  struct nodeinfo *dirParentNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
+  dirParentINode = iNodeFactory(root_inode, root_node_info, sb->blksz);
+
+  uint64_t parentOfDirParentNodeInfoIdx = (uint64_t) 1;
+  uint64_t parentOfDirParentINodeIdx = (uint64_t) 2;
+
+  struct inode *previousInode = (struct inode*) malloc(sb->blksz);
+  struct inode *currentInode = (struct inode*) malloc(sb->blksz);
+  previousInode = iNodeFactory(root_inode, root_node_info, sb->blksz);
+
+  struct nodeinfo *previousNodeInfo = nodeInfoFactory(root_node_info, sb->blksz);
+  struct nodeinfo *currentNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
+
+  free(root_inode);
+  free(root_node_info);
+
+  int subpath_exists = 0;
   // Search for the file in using the path trough root directory
-  for (int j = 0; j < numSubfolders; j++) {
+  for(int i = 0; i < path_depth; i++) {
     // Infinite loop until check all the subpaths in the path
     while(1) {
-      int found = 0;
-      // Check if the current iNode is a subfolder or file
-      int k;
-      for(k = 0; k < nodeInfo1->size; k++) {
+      subpath_exists = 0;
+      int j;
+      for(j = 0; j < previousNodeInfo->size; j++) {
         // Read the inode from the file
-        lseek(sb->fd, inode1->links[k] * sb->blksz, SEEK_SET);
-        read(sb->fd, inode2, sb->blksz);
+        lseek(sb->fd, previousInode->links[j]*sb->blksz, SEEK_SET);
+        read(sb->fd, currentInode, sb->blksz);
 
         // Deal with the case where current is child node
-        if(inode2->mode == IMCHILD) {
-          lseek(sb->fd, inode2->parent * sb->blksz, SEEK_SET);
-          read(sb->fd, inode2, sb->blksz);
+        if(currentInode->mode == IMCHILD) {
+          lseek(sb->fd, currentInode->parent*sb->blksz, SEEK_SET);
+          read(sb->fd, currentInode, sb->blksz);
         }
 
         // Get's nodeinfo from the inode
-        lseek(sb->fd, inode2->meta * sb->blksz, SEEK_SET);
-        read(sb->fd, nodeInfo2, sb->blksz);
+        lseek(sb->fd, currentInode->meta*sb->blksz, SEEK_SET);
+        read(sb->fd, currentNodeInfo, sb->blksz);
 
         // Check by the path name if it matches with the current nodeinfo
-        if(strcmp(nodeInfo2->name, files[j]) == 0) {
-          found = 1;
-          break;
-        }
+        if(strcmp(currentNodeInfo->name, path_vector[i]) == 0){
+					subpath_exists = 1;
+					break;
+				}
       }
     
-      if (found == 1) {
+      if (subpath_exists == 1) {
         // The current node is the subfolder or file we are looking for
-        if (j == numSubfolders-1) {
-          blocks[0] = inode2->meta;
-          blocks[1] = inode1->links[k];
+        if (i == path_depth - 1) {
+          block_indexes[0] = currentInode->meta;
+          block_indexes[1] = previousInode->links[j];
         } else {
-          parentInfoRoot = inode2->meta;
-          parentInodeRoot = inode1->links[k];
+          parentOfDirParentNodeInfoIdx = currentInode->meta;
+          parentOfDirParentINodeIdx = previousInode->links[j];
         }
         break;
-      } else if (j == numSubfolders - 1 || inode1->next == 0) {
+      } else if (i == path_depth - 1 || previousInode->next == 0) {
         // The directory does not exists
         errno = ENOENT;
         return -1;
       } 
 
-      lseek(sb->fd, inode1->next * sb->blksz, SEEK_SET);
-      read(sb->fd, inode1, sb->blksz);
+      lseek(sb->fd, previousInode->next * sb->blksz, SEEK_SET);
+      read(sb->fd, previousInode, sb->blksz);
     }
 
-    inodeParent = iNodeFactory(inode1, nodeInfo1, sb->blksz);
-    nodeInfoParent = nodeInfoFactory(nodeInfo1, sb->blksz);
+    dirParentINode = iNodeFactory(previousInode, previousNodeInfo, sb->blksz);
+    dirParentNodeInfo = nodeInfoFactory(previousNodeInfo, sb->blksz);
 
     // Read the next folder
-    inode1 = iNodeFactory(inode2, nodeInfo2, sb->blksz);
-    nodeInfo1 = nodeInfoFactory(nodeInfo2, sb->blksz);
+    previousInode = iNodeFactory(currentInode, currentNodeInfo, sb->blksz);
+    previousNodeInfo = nodeInfoFactory(currentNodeInfo, sb->blksz);
   }
   
   // Check if the directory is empty
-  if(nodeInfo1->size > 0) {
+  if(previousNodeInfo->size > 0) {
     errno = ENOTEMPTY;
     return -1;
   }
 
   // Free blocks used by the directory
-  fs_put_block(sb, blocks[0]);
-  fs_put_block(sb, blocks[1]);
+  fs_put_block(sb, block_indexes[0]);
+  fs_put_block(sb, block_indexes[1]);
 
   // Remove the directory from the parent node
-  for(int i = 0; i < nodeInfoParent->size; i++) {
-    if(inodeParent->links[i] == blocks[1]) {
-      while (i < nodeInfoParent->size - 1) {
-        inodeParent->links[i] = inodeParent->links[i+1];
+  for(int i = 0; i < dirParentNodeInfo->size; i++) {
+    if(dirParentINode->links[i] == block_indexes[1]) {
+      while (i < dirParentNodeInfo->size - 1) {
+        dirParentINode->links[i] = dirParentINode->links[i+1];
         i++;
       }
       break;    
@@ -964,14 +993,14 @@ int fs_rmdir(struct superblock *sb, const char *dname) {
   }
 
   // Write the inode
-  lseek(sb->fd, parentInodeRoot * sb->blksz, SEEK_SET);
-  write(sb->fd, inodeParent, sb->blksz);
+  lseek(sb->fd, parentOfDirParentINodeIdx * sb->blksz, SEEK_SET);
+  write(sb->fd, dirParentINode, sb->blksz);
 
-  nodeInfoParent->size -= 1;
+  dirParentNodeInfo->size -= 1;
 
   // Write the nodeinfo
-  lseek(sb->fd, parentInfoRoot * sb->blksz, SEEK_SET);
-  write(sb->fd, nodeInfoParent, sb->blksz);
+  lseek(sb->fd, parentOfDirParentNodeInfoIdx * sb->blksz, SEEK_SET);
+  write(sb->fd, dirParentNodeInfo, sb->blksz);
 
   // Updates superblock
   lseek(sb->fd, 0, SEEK_SET);
@@ -981,113 +1010,133 @@ int fs_rmdir(struct superblock *sb, const char *dname) {
 }
 
 char * fs_list_dir(struct superblock *sb, const char *dname) {
-  struct inode *inode1 = (struct inode*) malloc(sb->blksz);
-  struct nodeinfo *nodeInfo1 = (struct nodeinfo*) malloc(sb->blksz);
-  struct inode *inode2 = (struct inode*) malloc(sb->blksz);
-  struct nodeinfo *nodeInfo2 = (struct nodeinfo*) malloc(sb->blksz);
-
-  // Get a vector of string with the path levels
-  char *name = (char*) malloc(4096*sizeof(char));
-	strcpy(name, dname);
+  char *file_path = (char*) malloc(4096*sizeof(char));
+	strcpy(file_path, dname);
 	
-  int i = 0;
-  char *token = strtok(name, "/");
-  char files[128][128];
-  while(token != NULL){
-    strcpy(files[i], token);
-    token = strtok(NULL, "/");
-    i++;
-  }
-  int numSubfolders = i;
+	// Get a vector of string with the path levels
+  int path_depth = 0;
+  char path_vector[128][128];
 
-  // Get the root directory iNode
-  lseek(sb->fd, sb->blksz * sb->root, SEEK_SET);
-  read(sb->fd, inode1, sb->blksz);
+  char *path_level = strtok(file_path, "/");
+  while(path_level != NULL){
+    strcpy(path_vector[path_depth], path_level);
+    path_level = strtok(NULL, "/");
+    path_depth++;
+  }
 
   // Get the root directory nodeinfo
-  lseek(sb->fd, sb->blksz * 1, SEEK_SET);
-  read(sb->fd, nodeInfo1, sb->blksz);
+  struct nodeinfo *root_node_info = (struct nodeinfo*) malloc(sb->blksz);
+  int root_nodeinfo_index = 1;
+  lseek(sb->fd, root_nodeinfo_index * sb->blksz, SEEK_SET);
+  read(sb->fd, root_node_info, sb->blksz);
 
+  // Get the root directory inode
+  struct inode *root_inode = (struct inode*) malloc(sb->blksz);
+  lseek(sb->fd, sb->root * sb->blksz, SEEK_SET);
+  read(sb->fd, root_inode, sb->blksz);
+
+  // Initialize the vector of block indexes
+  uint64_t block_indexes[4096];
+  block_indexes[0] = 1; // root nodeinfo index
+  block_indexes[1] = sb->root; // root inode index
+
+  struct inode *dirParentINode = (struct inode*) malloc(sb->blksz);
+  struct nodeinfo *dirParentNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
+  dirParentINode = iNodeFactory(root_inode, root_node_info, sb->blksz);
+
+  uint64_t parentOfDirParentNodeInfoIdx = (uint64_t) 1;
+  uint64_t parentOfDirParentINodeIdx = (uint64_t) 2;
+
+  struct inode *previousInode = (struct inode*) malloc(sb->blksz);
+  struct inode *currentInode = (struct inode*) malloc(sb->blksz);
+  previousInode = iNodeFactory(root_inode, root_node_info, sb->blksz);
+
+  struct nodeinfo *previousNodeInfo = nodeInfoFactory(root_node_info, sb->blksz);
+  struct nodeinfo *currentNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
+
+  free(root_inode);
+  free(root_node_info);
+
+  int subpath_exists = 0;
   // Search for the file in using the path trough root directory
-  for (int j = 0; j < numSubfolders; j++) {
+  for(int i = 0; i < path_depth; i++) {
     // Infinite loop until check all the subpaths in the path
     while(1) {
-      int found = 0;
-      // Check if the current iNode is a subfolder or file
-      int k;
-      for(k = 0; k < nodeInfo1->size; k++) {
+      subpath_exists = 0;
+      int j;
+      for(j = 0; j < previousNodeInfo->size; j++) {
         // Read the inode from the file
-        lseek(sb->fd, inode1->links[k] * sb->blksz, SEEK_SET);
-        read(sb->fd, inode2, sb->blksz);
+        lseek(sb->fd, previousInode->links[j]*sb->blksz, SEEK_SET);
+        read(sb->fd, currentInode, sb->blksz);
 
         // Deal with the case where current is child node
-        if(inode2->mode == IMCHILD) {
-          lseek(sb->fd, inode2->parent * sb->blksz, SEEK_SET);
-          read(sb->fd, inode2, sb->blksz);
+        if(currentInode->mode == IMCHILD) {
+          lseek(sb->fd, currentInode->parent*sb->blksz, SEEK_SET);
+          read(sb->fd, currentInode, sb->blksz);
         }
 
         // Get's nodeinfo from the inode
-        lseek(sb->fd, inode2->meta * sb->blksz, SEEK_SET);
-        read(sb->fd, nodeInfo2, sb->blksz);
+        lseek(sb->fd, currentInode->meta*sb->blksz, SEEK_SET);
+        read(sb->fd, currentNodeInfo, sb->blksz);
 
         // Check by the path name if it matches with the current nodeinfo
-        if(strcmp(nodeInfo2->name, files[j]) == 0) {
-          found = 1;
-          break;
-        }
+        if(strcmp(currentNodeInfo->name, path_vector[i]) == 0){
+					subpath_exists = 1;
+					break;
+				}
       }
     
-      if (found == 1) {
+      if (subpath_exists == 1) {
         // The current node is the subfolder or file we are looking for
         break;
-      } else if (j == (numSubfolders - 1) || inode1->next == 0) {
+      } else if (j == (path_depth - 1) || previousInode->next == 0) {
         // The directory does not exists
         errno = ENOENT;
         char *elements = (char*) malloc(3 * sizeof(char));
-        strcpy(elements, "-1"); // TODO: change this to test if works
+        strcpy(elements, "-1");
         return elements;
       } 
 
-      lseek(sb->fd, inode1->next * sb->blksz, SEEK_SET);
-      read(sb->fd, inode1, sb->blksz);
+      lseek(sb->fd, previousInode->next * sb->blksz, SEEK_SET);
+      read(sb->fd, previousInode, sb->blksz);
     }
 
     // Read the next folder
-    inode1 = iNodeFactory(inode2, nodeInfo2, sb->blksz);
-    nodeInfo1 = nodeInfoFactory(nodeInfo2, sb->blksz);
+    previousInode = iNodeFactory(currentInode, currentNodeInfo, sb->blksz);
+    previousNodeInfo = nodeInfoFactory(currentNodeInfo, sb->blksz);
   }
 
   char *list = (char*) malloc(4096 * sizeof(char));
 
   // Read the nodeinfo of the subfolder
 	int pos = 0;
-  for(int j = 0; j < nodeInfo1->size; j++) {
+  for(int i = 0; i < previousNodeInfo->size; i++) {
     // Read the inode from the file
-    lseek(sb->fd, inode1->links[j] * sb->blksz, SEEK_SET);
-    read(sb->fd, inode2, sb->blksz);
+    lseek(sb->fd, previousInode->links[i] * sb->blksz, SEEK_SET);
+    read(sb->fd, currentInode, sb->blksz);
 
     // Deal with the case where current is child node
-    if(inode2->mode == IMCHILD) {
-      lseek(sb->fd, inode2->parent * sb->blksz, SEEK_SET);
-      read(sb->fd, inode2, sb->blksz);
+    if(currentInode->mode == IMCHILD) {
+      lseek(sb->fd, currentInode->parent * sb->blksz, SEEK_SET);
+      read(sb->fd, currentInode, sb->blksz);
     }
 
     // Get's nodeinfo from the inode
-    lseek(sb->fd, inode2->meta * sb->blksz, SEEK_SET);
-    read(sb->fd, nodeInfo2, sb->blksz);
+    lseek(sb->fd, currentInode->meta * sb->blksz, SEEK_SET);
+    read(sb->fd, currentNodeInfo, sb->blksz);
 
     // Concatenate the name of the file to the list string
-    strcpy((list+pos), nodeInfo2->name);
-		pos += strlen(nodeInfo2->name);
+    strcpy((list+pos), currentNodeInfo->name);
+		pos += strlen(currentNodeInfo->name);
     
     // If current is a subfolder, add a '/' to the end of the name
-    if(inode2->mode == IMDIR) {
+    if(currentInode->mode == IMDIR) {
       list[pos] = '/';
 			list[pos+1] = '\0';
 			pos++;
     }
 
-    if (j < nodeInfo1->size - 1) {
+    if (i < previousNodeInfo->size - 1) {
       list[pos] = ' ';
 			list[pos+1] = '\0';
 			pos++;
