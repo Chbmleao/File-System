@@ -353,18 +353,25 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
   block_indexes[0] = 1; // root nodeinfo index
   block_indexes[1] = sb->root; // root inode index
 
-  struct inode *fileParentINode = root_inode;
-  struct nodeinfo *fileParentNodeInfo = root_node_info;
+  struct inode *fileParentINode;
+  struct nodeinfo *fileParentNodeInfo;
+  copyInode(root_inode, fileParentINode, root_node_info);
+  copyInodeInfo(root_node_info, fileParentNodeInfo);
 
   uint64_t parentOfFileParentINodeIdx = (uint64_t) 1;
   uint64_t parentOfFileParentNodeInfoIdx = (uint64_t) 2;
 
   uint64_t is_new_file = 0;
-  struct inode *previousInode = root_inode;
+  struct inode *previousInode;
   struct inode *currentInode = (struct inode*) malloc(sb->blksz);
+  copyInode(root_inode, previousInode, root_node_info);
 
-  struct nodeinfo *previousNodeInfo = root_node_info;
+  struct nodeinfo *previousNodeInfo;
   struct nodeinfo *currentNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
+  copyInodeInfo(root_node_info, previousNodeInfo);
+
+  free(root_inode);
+  free(root_node_info);
 
   int subpath_exists = 0;
   // Search for the file in using the path trough root directory
@@ -405,8 +412,8 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
           is_new_file = 0;
         } else {
           // Updates the inode parents
-          fileParentINode = currentInode;
-          fileParentNodeInfo = currentNodeInfo;
+          copyInode(currentInode, fileParentINode, currentNodeInfo);
+          copyInodeInfo(currentNodeInfo, fileParentNodeInfo);
 
           parentOfFileParentINodeIdx = previousInode->links[j];
           parentOfFileParentNodeInfoIdx = currentInode->meta;
@@ -448,8 +455,8 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
     }
 
     // Read the next folder
-    previousInode = currentInode;
-    previousNodeInfo = currentNodeInfo;
+    copyInode(currentInode, previousInode, currentNodeInfo);
+    copyInodeInfo(currentNodeInfo, previousNodeInfo);
   }
 
   int blocks_needed;
@@ -475,7 +482,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
     if(blocks_currently_being_used <= blocks_needed) {
       // There are not enough or just enough blocks to store the new content
       int block_idx = 2; // first 2 position of block_indexes already used
-      currentInode = previousInode;
+      copyInode(previousInode, currentInode, previousNodeInfo);
       // Maps the blocks already being used to the block_indexes vector
       while(currentInode->next != 0) {
         block_indexes[block_idx] = previousInode->next; // all already being used
@@ -492,7 +499,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
     } else {
       // There are more than enough blocks to store the new content
       int block_idx = 2; // first 2 position of block_indexes already used
-      currentInode = previousInode;
+      copyInode(previousInode, currentInode, previousNodeInfo);
       // Maps the blocks already being used to the block_indexes vector
       while(currentInode->next != 0) {
         block_indexes[block_idx] = previousInode->next; // all already being used
@@ -539,7 +546,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
   write(sb->fd, previousInode, sb->blksz);
 
   // Write the file content on children blocks
-  currentInode = previousInode;
+  copyInode(previousInode, currentInode, previousNodeInfo);
   currentInode->mode = IMCHILD;
   currentInode->parent = block_indexes[1];
 
@@ -605,17 +612,24 @@ int fs_unlink(struct superblock *sb, const char *fname) {
   block_indexes[0] = 1; // root nodeinfo index
   block_indexes[1] = sb->root; // root inode index
 
-  struct inode *fileParentINode = root_inode;
-  struct nodeinfo *fileParentNodeInfo = root_node_info;
+  struct inode *fileParentINode;
+  struct nodeinfo *fileParentNodeInfo;
+  copyInode(root_inode, fileParentINode, root_node_info);
+  copyInodeInfo(root_node_info, fileParentNodeInfo);
 
   uint64_t parentOfFileParentINodeIdx = (uint64_t) 1;
   uint64_t parentOfFileParentNodeInfoIdx = (uint64_t) 2;
 
-  struct inode *previousInode = root_inode;
+  struct inode *previousInode;
   struct inode *currentInode = (struct inode*) malloc(sb->blksz);
+  copyInode(root_inode, previousInode, root_node_info);
 
-  struct nodeinfo *previousNodeInfo = root_node_info;
+  struct nodeinfo *previousNodeInfo;
   struct nodeinfo *currentNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
+  copyInodeInfo(root_node_info, currentNodeInfo);
+
+  free(root_inode);
+  free(root_node_info);
 
   int subpath_exists = 0;
   // Search for the file in using the path trough root directory
@@ -668,12 +682,12 @@ int fs_unlink(struct superblock *sb, const char *fname) {
       read(sb->fd, previousInode, sb->blksz);
     }
     // Updates the inode parents
-    fileParentINode = currentInode;
-    fileParentNodeInfo = currentNodeInfo;
+    copyInode(currentInode, previousInode, currentNodeInfo);
+    copyInodeInfo(currentNodeInfo, previousNodeInfo);
 
     // Read the next folder
-    previousInode = currentInode;
-    previousNodeInfo = currentNodeInfo;
+    copyInode(currentInode, previousInode, currentNodeInfo);
+    copyInodeInfo(currentNodeInfo, previousNodeInfo);
   }
 
   // Remove parent references to the removed blocks
