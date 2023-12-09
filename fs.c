@@ -337,6 +337,9 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
   struct inode *fileParentINode = root_inode;
   struct nodeinfo *fileParentNodeInfo = root_node_info;
 
+  uint64_t parentOfFileParentINodeIdx = (uint64_t) 1;
+  uint64_t parentOfFileParentNodeInfoIdx = (uint64_t) 2;
+
   uint64_t is_new_file = 0;
   struct inode *previousInode = root_inode;
   struct inode *currentInode = (struct inode*) malloc(sb->blksz);
@@ -385,6 +388,9 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
           // Updates the inode parents
           fileParentINode = currentInode;
           fileParentNodeInfo = currentNodeInfo;
+
+          parentOfFileParentINodeIdx = previousInode->links[j];
+          parentOfFileParentNodeInfoIdx = currentInode->meta;
         }
         break;
       } else {
@@ -427,21 +433,125 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
     previousNodeInfo = currentNodeInfo;
   }
 
+  int blocks_needed;
   if(is_new_file) {
     // Stores the new iNode as a child of the parent node
     fileParentINode->links[fileParentNodeInfo->size] = block_indexes[1];
     fileParentNodeInfo->size += 1;
 
     // Gets amount of blocks needed to store the file
-    int blocks_needed = cnt/(sb->blksz-20); //TODO: attention
+    blocks_needed = cnt/(sb->blksz-20); //TODO: attention
 
     // Gets free blocks to store the file
     for(int i = 0; i < blocks_needed-1; i++) {
       block_indexes[i+2] = fs_get_block(sb);
     }
   } else {
+    // Get amount of blocks already used by the file node
+    int blocks_currently_being_used = previousNodeInfo->size/(sb->blksz-20); //TODO: attention
+  
+    // Gets amount of blocks needed to store the file
+    blocks_needed = cnt/(sb->blksz-20); //TODO: attention
 
+    if(blocks_currently_being_used <= blocks_needed) {
+      // There are not enough or just enough blocks to store the new content
+      int block_idx = 2; // first 2 position of block_indexes already used
+      currentInode = previousInode;
+      // Maps the blocks already being used to the block_indexes vector
+      while(currentInode->next != 0) {
+        block_indexes[block_idx] = previousInode->next; // all already being used
+        lseek(sb->fd, previousInode->next*sb->blksz, SEEK_SET);
+        read(sb->fd, currentInode, sb->blksz);
+
+        block_idx++;
+      }
+
+      // Gets free blocks to store the file
+      for(int i = blocks_currently_being_used + 1; i <= blocks_needed; i++) { //TODO: try to change blocks_used => block idx
+        block_indexes[i] = fs_get_block(sb);
+      }
+    } else {
+      // There are more than enough blocks to store the new content
+      int block_idx = 2; // first 2 position of block_indexes already used
+      currentInode = previousInode;
+      // Maps the blocks already being used to the block_indexes vector
+      while(currentInode->next != 0) {
+        block_indexes[block_idx] = previousInode->next; // all already being used
+        lseek(sb->fd, previousInode->next*sb->blksz, SEEK_SET);
+        read(sb->fd, currentInode, sb->blksz);
+
+        block_idx++;
+      }
+
+      // Deallocates the blocks that will not be used anymore
+      for(int i = blocks_currently_being_used; i > blocks_currently_being_used; i--) {
+        int fs_put_block_output = fs_put_block(sb, block_indexes[i]);
+        if(fs_put_block_output != 0) return fs_put_block_output;
+      }
+    }
   }
+
+  // Update the parent nodeinfo of the file node
+  lseek(sb->fd, parentOfFileParentNodeInfoIdx*sb->blksz, SEEK_SET);
+  write(sb->fd, fileParentNodeInfo, sb->blksz);
+
+  // Update the parent inode of the file node
+  lseek(sb->fd, parentOfFileParentINodeIdx*sb->blksz, SEEK_SET);
+  write(sb->fd, fileParentINode, sb->blksz);
+
+  // Update the file nodeinfo
+  lseek(sb->fd, block_indexes[0]*sb->blksz, SEEK_SET);
+  write(sb->fd, currentNodeInfo, sb->blksz);
+
+  // Update the file inode
+  previousInode->mode = IMREG;
+  previousInode->meta = block_indexes[0];
+  previousInode->parent = block_indexes[1];
+
+  if(blocks_needed == 1) {
+    // The file fits in a single block
+    previousInode->next = 0;
+  } else {
+    // The file does not fit in a single block
+    previousInode->next = block_indexes[2];
+  }
+
+  lseek(sb->fd, block_indexes[1]*sb->blksz, SEEK_SET);
+  write(sb->fd, previousInode, sb->blksz);
+
+  // Write the file content on children blocks
+  currentInode = previousInode;
+  currentInode->mode = IMCHILD;
+  currentInode->parent = block_indexes[1];
+
+  // Write buffer content on all inodes
+  for(int i = 2; i <= blocks_needed; i++) {
+    currentInode->meta = block_indexes[i-1];
+    if(i == blocks_needed) {
+      // Last block
+      currentInode->next = 0;
+    } else currentInode->next = block_indexes[i+1];
+
+    lseek(sb->fd, block_indexes[i]*sb->blksz, SEEK_SET);
+    write(sb->fd, currentInode, sb->blksz);
+
+    // Write buffer content on the current inode
+    lseek(sb->fd, block_indexes[i]*sb->blksz + 20, SEEK_SET);
+    write(sb->fd, buf, sb->blksz - 20);
+
+    // Update buffer pointer
+    buf += sb->blksz - 20; //TODO: attention
+  }
+
+  // Writes superblock to file
+  lseek(sb->fd, 0, SEEK_SET);
+  if(write(sb->fd, sb, sb->blksz) < 0) {
+    // Error writing superblock
+    errno = EPERM;
+    return -1;
+  }
+
+  return 0;
 }
 
 ssize_t fs_read_file(struct superblock *sb, const char *fname, char *buf, size_t bufsz) {
@@ -449,7 +559,136 @@ ssize_t fs_read_file(struct superblock *sb, const char *fname, char *buf, size_t
 }
 
 int fs_unlink(struct superblock *sb, const char *fname) {
+  // Get a vector of string with the path levels
+  int path_depth = 0;
+  char path_vector[100][100];
 
+  char *token = strtok(fname, "/");
+  while(token != NULL){
+    strcpy(path_vector[path_depth], token);
+    token = strtok(NULL, "/");
+    path_depth++;
+  }
+
+  // Get the root directory nodeinfo
+  struct nodeinfo *root_node_info = (struct nodeinfo*) malloc(sb->blksz);
+  int root_nodeinfo_index = 1;
+  lseek(sb->fd, root_nodeinfo_index * sb->blksz, SEEK_SET);
+  read(sb->fd, root_node_info, sb->blksz);
+
+  // Get the root directory inode
+  struct inode *root_inode = (struct inode*) malloc(sb->blksz);
+  lseek(sb->fd, sb->root * sb->blksz, SEEK_SET);
+  read(sb->fd, root_inode, sb->blksz);
+
+  // Initialize the vector of block indexes
+  uint64_t block_indexes[5000];
+  block_indexes[0] = 1; // root nodeinfo index
+  block_indexes[1] = sb->root; // root inode index
+
+  struct inode *fileParentINode = root_inode;
+  struct nodeinfo *fileParentNodeInfo = root_node_info;
+
+  uint64_t parentOfFileParentINodeIdx = (uint64_t) 1;
+  uint64_t parentOfFileParentNodeInfoIdx = (uint64_t) 2;
+
+  struct inode *previousInode = root_inode;
+  struct inode *currentInode = (struct inode*) malloc(sb->blksz);
+
+  struct nodeinfo *previousNodeInfo = root_node_info;
+  struct nodeinfo *currentNodeInfo = (struct nodeinfo*) malloc(sb->blksz);
+
+  int subpath_exists = 0;
+  // Search for the file in using the path trough root directory
+  for(int i = 0; i < path_depth; i++) {
+    // Infinite loop until check all the subpaths in the path
+    while(1) {
+      subpath_exists = 0;
+      int j;
+      for(j = 0; j < root_node_info->size; j++) {
+        // Read the inode from the file
+        lseek(sb->fd, previousInode->links[j]*sb->blksz, SEEK_SET);
+        read(sb->fd, currentInode, sb->blksz);
+
+        // Deal with the case where current is child node
+        if(currentInode->mode == IMCHILD) {
+          lseek(sb->fd, currentInode->parent*sb->blksz, SEEK_SET);
+          read(sb->fd, currentInode, sb->blksz);
+        }
+
+        // Get's nodeinfo from the inode
+        lseek(sb->fd, currentInode->meta*sb->blksz, SEEK_SET);
+        read(sb->fd, currentNodeInfo, sb->blksz);
+
+        // Check by the path name if it matches with the current nodeinfo
+        if(strcmp(currentNodeInfo->name, path_vector[i]) == 0){
+					subpath_exists = 1;
+					break;
+				}
+      }
+    
+      if(subpath_exists == 1) {
+        // The current node is a subfolder or file
+        if(i == (path_depth - 1)) {
+          // The current node is the file
+          block_indexes[0] = currentInode->meta;
+          block_indexes[1] = previousInode->links[j];
+        } else {
+          parentOfFileParentINodeIdx = previousInode->links[j];
+          parentOfFileParentNodeInfoIdx = currentInode->meta;
+        }
+        break;
+      } else if(j == (path_depth-1)  || previousInode->next == 0) {
+        // Given folder path does not exists
+        errno = ENOENT;
+        return -1;
+      }
+
+      // Read the next inode
+      lseek(sb->fd, previousInode->next*sb->blksz, SEEK_SET);
+      read(sb->fd, previousInode, sb->blksz);
+    }
+    // Updates the inode parents
+    fileParentINode = currentInode;
+    fileParentNodeInfo = currentNodeInfo;
+
+    // Read the next folder
+    previousInode = currentInode;
+    previousNodeInfo = currentNodeInfo;
+  }
+
+  // Remove parent references to the removed blocks
+  for(int i = 0; i < fileParentNodeInfo->size; i++) {
+    if(fileParentINode->links[i] == block_indexes[1]) {
+      for(int j = i; j < fileParentNodeInfo->size - 1; j++) {
+        fileParentINode->links[j] = fileParentINode->links[j+1];
+      }
+      break;
+    }
+  }
+
+  // Put removed blocks back to the free list
+	fs_put_block(sb, block_indexes[0]);
+	fs_put_block(sb, block_indexes[1]);
+
+  // Update the parent nodeinfo of the file node
+  fileParentNodeInfo->size -= 1;
+  lseek(sb->fd, parentOfFileParentNodeInfoIdx*sb->blksz, SEEK_SET);
+  write(sb->fd, fileParentNodeInfo, sb->blksz);
+
+  // Update the parent inode of the file node
+  lseek(sb->fd, parentOfFileParentINodeIdx*sb->blksz, SEEK_SET);
+  write(sb->fd, fileParentINode, sb->blksz);
+
+  // Update superblock on the file
+  lseek(sb->fd, 0, SEEK_SET);
+  if(write(sb->fd, sb, sb->blksz) < 0) {
+    // Error writing superblock
+    errno = EPERM;
+    return -1;
+  }
+
+  return 0;
 }
 
 int fs_mkdir(struct superblock *sb, const char *dname) {
