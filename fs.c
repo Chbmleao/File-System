@@ -404,7 +404,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
         read(sb->fd, currentNodeInfo, sb->blksz);
 
         // Check by the path name if it matches with the current nodeinfo
-        if(strcmp(currentNodeInfo->name, path_vector[i]) == 0){
+        if(!strcmp(currentNodeInfo->name, path_vector[i])){
 					subpath_exists = 1;
 					break;
 				}
@@ -449,7 +449,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
           block_indexes[1] = fs_get_block(sb);
 
           is_new_file = 1;
-        } else if(previousInode->next == 0) {
+        } else if(!previousInode->next) {
           // Given folder path does not exists
           errno = ENOENT;
           return -1;
@@ -652,7 +652,7 @@ int fs_unlink(struct superblock *sb, const char *fname) {
         read(sb->fd, currentNodeInfo, sb->blksz);
 
         // Check by the path name if it matches with the current nodeinfo
-        if(strcmp(currentNodeInfo->name, path_vector[i]) == 0){
+        if(!strcmp(currentNodeInfo->name, path_vector[i])){
 					subpath_exists = 1;
 					break;
 				}
@@ -669,7 +669,7 @@ int fs_unlink(struct superblock *sb, const char *fname) {
           parentOfFileParentNodeInfoIdx = currentInode->meta;
         }
         break;
-      } else if(i == (path_depth - 1)  || previousInode->next == 0) {
+      } else if(i == path_depth - 1  || !previousInode->next) {
         // Given folder path does not exists
         errno = ENOENT;
         return -1;
@@ -783,7 +783,7 @@ int fs_mkdir(struct superblock *sb, const char *dname) {
         read(sb->fd, currentNodeInfo, sb->blksz);
 
         // Check by the path name if it matches with the current nodeinfo
-        if(strcmp(currentNodeInfo->name, path_vector[i]) == 0){
+        if(!strcmp(currentNodeInfo->name, path_vector[i])){
 					subpath_exists = 1;
 					break;
 				}
@@ -796,7 +796,7 @@ int fs_mkdir(struct superblock *sb, const char *dname) {
           block_indexes[1] = previousInode->links[j];
         }
         break;
-      } else if (i == (path_depth - 2) || previousInode->next == 0) {
+      } else if (i == path_depth - 2 || !previousInode->next) {
         // The directory does not exists
         errno = ENOENT;
         return -1;
@@ -911,7 +911,7 @@ int fs_rmdir(struct superblock *sb, const char *dname) {
         read(sb->fd, currentNodeInfo, sb->blksz);
 
         // Check by the path name if it matches with the current nodeinfo
-        if(strcmp(currentNodeInfo->name, path_vector[i]) == 0){
+        if(!strcmp(currentNodeInfo->name, path_vector[i])){
 					subpath_exists = 1;
 					break;
 				}
@@ -927,7 +927,7 @@ int fs_rmdir(struct superblock *sb, const char *dname) {
           parentOfDirParentINodeIdx = previousInode->links[j];
         }
         break;
-      } else if (i == path_depth - 1 || previousInode->next == 0) {
+      } else if (i == path_depth - 1 || !previousInode->next) {
         // The directory does not exists
         errno = ENOENT;
         return -1;
@@ -1044,7 +1044,7 @@ char * fs_list_dir(struct superblock *sb, const char *dname) {
         read(sb->fd, currentNodeInfo, sb->blksz);
 
         // Check by the path name if it matches with the current nodeinfo
-        if(strcmp(currentNodeInfo->name, path_vector[i]) == 0){
+        if(!strcmp(currentNodeInfo->name, path_vector[i])){
 					subpath_exists = 1;
 					break;
 				}
@@ -1053,7 +1053,7 @@ char * fs_list_dir(struct superblock *sb, const char *dname) {
       if (subpath_exists == 1) {
         // The current node is the subfolder or file we are looking for
         break;
-      } else if (j == (path_depth - 1) || previousInode->next == 0) {
+      } else if (j == path_depth - 1 || !previousInode->next) {
         // The directory does not exists
         errno = ENOENT;
         char *elements = (char*) malloc(3 * sizeof(char));
