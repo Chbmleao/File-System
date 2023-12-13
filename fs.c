@@ -570,7 +570,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
     write(sb->fd, currentInode, sb->blksz);
 
     // Write buffer content on the current inode
-    lseek(sb->fd, block_indexes[i]*sb->blksz + NODE_METADATA_SIZE, SEEK_SET);
+    lseek(sb->fd, NODE_METADATA_SIZE, SEEK_SET);
     write(sb->fd, buf, sb->blksz - NODE_METADATA_SIZE);
 
     // Update buffer pointer
@@ -703,7 +703,7 @@ ssize_t fs_read_file(struct superblock *sb, const char *fname, char *buf, size_t
     lseek(sb->fd, previousInode->next*sb->blksz, SEEK_SET);
     read(sb->fd, currentInode, sb->blksz);
 
-    lseek(sb->fd, (previousInode->next*sb->blksz) + NODE_METADATA_SIZE, SEEK_SET);
+    lseek(sb->fd, NODE_METADATA_SIZE, SEEK_SET);
     read(sb->fd, buf, sb->blksz - NODE_METADATA_SIZE);
     buf += sb->blksz - NODE_METADATA_SIZE;
     bufsz -= sb->blksz - NODE_METADATA_SIZE;
