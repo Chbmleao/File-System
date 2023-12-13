@@ -14,6 +14,7 @@
 #define CEILING(valueToBeCeiled) ((valueToBeCeiled - (int)(valueToBeCeiled)) > 0 ? (int)(valueToBeCeiled + 1) : (int)(valueToBeCeiled))
 
 #define FS_MAGIC_NUMBER 0xdcc605f5
+#define NODE_METADATA_SIZE 32
 
 // Permissions constants
 #define RD_WR_OWNER S_IRUSR | S_IWUSR 
@@ -434,7 +435,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
 
           // Store info of new node
           strcpy(currentNodeInfo->name, path_vector[i]);
-          currentNodeInfo->size = sb->blksz - 20;
+          currentNodeInfo->size = sb->blksz - NODE_METADATA_SIZE;
 
           // Store it in a free block
           block_indexes[0] = fs_get_block(sb);
@@ -474,7 +475,7 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
     fileParentNodeInfo->size += 1;
 
     // Gets amount of blocks needed to store the file
-    blocks_needed = CEILING((float)cnt/((float)sb->blksz-20.0));
+    blocks_needed = CEILING((float)cnt/((float)sb->blksz - (float)NODE_METADATA_SIZE));
 
     // Gets free blocks to store the file
     for(int i = 0; i < blocks_needed-1; i++) {
@@ -482,10 +483,10 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
     }
   } else {
     // Get amount of blocks already used by the file node
-    int blocks_currently_being_used = CEILING((float)previousNodeInfo->size/((float)sb->blksz-20.0));
+    int blocks_currently_being_used = CEILING((float)previousNodeInfo->size/((float)sb->blksz - (float)NODE_METADATA_SIZE));
   
     // Gets amount of blocks needed to store the file
-    blocks_needed = CEILING((float)cnt/((float)sb->blksz-20.0));
+    blocks_needed = CEILING((float)cnt/((float)sb->blksz - (float)NODE_METADATA_SIZE));
 
     if(blocks_currently_being_used <= blocks_needed) {
       // There are not enough or just enough blocks to store the new content
@@ -569,11 +570,11 @@ int fs_write_file(struct superblock *sb, const char *fname, char *buf, size_t cn
     write(sb->fd, currentInode, sb->blksz);
 
     // Write buffer content on the current inode
-    lseek(sb->fd, block_indexes[i]*sb->blksz + 20, SEEK_SET);
-    write(sb->fd, buf, sb->blksz - 20);
+    lseek(sb->fd, block_indexes[i]*sb->blksz + NODE_METADATA_SIZE, SEEK_SET);
+    write(sb->fd, buf, sb->blksz - NODE_METADATA_SIZE);
 
     // Update buffer pointer
-    buf += sb->blksz - 20;
+    buf += sb->blksz - NODE_METADATA_SIZE;
   }
 
   // Writes superblock to file
@@ -692,7 +693,7 @@ ssize_t fs_read_file(struct superblock *sb, const char *fname, char *buf, size_t
   }
 
   // Get amount of blocks being used by the file node
-  int blocks_currently_being_used = CEILING((float)previousNodeInfo->size/((float)sb->blksz-20.0));
+  int blocks_currently_being_used = CEILING((float)previousNodeInfo->size/((float)sb->blksz - (float)NODE_METADATA_SIZE));
 
   int block_idx = 2; // first 2 position of block_indexes already used
   currentInode = iNodeFactory(previousInode, previousNodeInfo, sb->blksz);
@@ -702,10 +703,10 @@ ssize_t fs_read_file(struct superblock *sb, const char *fname, char *buf, size_t
     lseek(sb->fd, previousInode->next*sb->blksz, SEEK_SET);
     read(sb->fd, currentInode, sb->blksz);
 
-    lseek(sb->fd, (previousInode->next*sb->blksz) + 20, SEEK_SET);
-    read(sb->fd, buf, sb->blksz - 20);
-    buf += sb->blksz - 20;
-    bufsz -= sb->blksz - 20;
+    lseek(sb->fd, (previousInode->next*sb->blksz) + NODE_METADATA_SIZE, SEEK_SET);
+    read(sb->fd, buf, sb->blksz - NODE_METADATA_SIZE);
+    buf += sb->blksz - NODE_METADATA_SIZE;
+    bufsz -= sb->blksz - NODE_METADATA_SIZE;
 
     block_idx++;
   }
