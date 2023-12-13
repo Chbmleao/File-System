@@ -163,13 +163,13 @@ struct superblock * fs_format(const char *fname, uint64_t blocksize) {
   // Fulfill remaining blocks with free pages
   for(int i = 3; i < sb->blks - 1; i++){
     free_page.next = i + 1;
-    free_page.count = 0;
+    free_page.count = 1;
     write(sb->fd, &free_page, blocksize);
   }
 
   // Last block is a free page with no next
   free_page.next = 0;
-  free_page.count = 0;
+  free_page.count = 1;
   write(sb->fd, &free_page, blocksize);
 
   return sb;
